@@ -3,6 +3,7 @@
 [![Weights](https://img.shields.io/badge/🤗-Weights-yellow)](https://huggingface.co/nvidia/personaplex-7b-v1)
 [![Paper](https://img.shields.io/badge/📄-Paper-blue)](https://arxiv.org/abs/2602.06053)
 [![Demo](https://img.shields.io/badge/🎮-Demo-green)](https://research.nvidia.com/labs/adlr/personaplex/)
+[![Demo](https://img.shields.io/badge/🔊-Live_Demo-orange)](https://ondevice.devicenexus.ai)
 [![Discord](https://img.shields.io/badge/Discord-Join-purple?logo=discord)](https://discord.gg/5jAXrrbwRb)
 
 PersonaPlex is a real-time, full-duplex speech-to-speech conversational model that enables persona control through text-based role prompts and audio-based voice conditioning. Trained on a combination of synthetic and real conversations, it produces natural, low-latency spoken interactions with a consistent persona. PersonaPlex is based on the [Moshi](https://arxiv.org/abs/2410.00037) architecture and weights.
@@ -12,6 +13,95 @@ PersonaPlex is a real-time, full-duplex speech-to-speech conversational model th
   <br>
   <em>PersonaPlex Architecture</em>
 </p>
+
+## What This Fork Adds
+
+FP8 weight quantization and inference optimizations for **Blackwell GPUs** (DGX Spark, Jetson Thor). Sub-80ms frame latency, entirely on-device. See [README-optimizations.md](README-optimizations.md) for the full performance breakdown.
+
+---
+
+## Running on DGX Spark
+
+### Prerequisites
+
+- NVIDIA DGX Spark (GB10)
+- Python 3.12
+- libopus (`sudo apt install libopus-dev`, or [build from source](#libopus-from-source) without sudo)
+- [Rust toolchain](https://rustup.rs/) (for building `sphn`)
+- HuggingFace token with [model license](https://huggingface.co/nvidia/personaplex-7b-v1) accepted
+
+### Setup
+
+```bash
+python3 -m venv ~/personaplex-venv
+source ~/personaplex-venv/bin/activate
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+git clone https://github.com/amarrmb/personaplex.git && cd personaplex
+pip install -e moshi/.
+export HF_TOKEN=<YOUR_TOKEN>
+```
+
+### Run
+
+```bash
+source ~/personaplex-venv/bin/activate
+SSL_DIR=$(mktemp -d)
+python -m moshi.server --fp8 --ssl "$SSL_DIR"
+```
+
+Open `https://<DGX_IP>:8998` in your browser. Expected frame time: **~74ms**.
+
+---
+
+## Running on Jetson Thor
+
+### Prerequisites
+
+- Jetson Thor with JetPack 7.1 (L4T R38.4.0)
+- Python 3.12
+- libopus (`sudo apt install libopus-dev`)
+- [Rust toolchain](https://rustup.rs/) (for building `sphn`)
+- sudo access (first run only, for power mode)
+- HuggingFace token with [model license](https://huggingface.co/nvidia/personaplex-7b-v1) accepted
+
+### Setup
+
+```bash
+python3 -m venv ~/personaplex-venv
+source ~/personaplex-venv/bin/activate
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+git clone https://github.com/amarrmb/personaplex.git && cd personaplex
+pip install -e moshi/.
+export HF_TOKEN=<YOUR_TOKEN>
+```
+
+### Run
+
+```bash
+# First run only — set max power mode
+sudo nvpmodel -m 0 && sudo jetson_clocks
+
+source ~/personaplex-venv/bin/activate
+SSL_DIR=$(mktemp -d)
+taskset -c 4-13 python -m moshi.server --fp8 --ssl "$SSL_DIR"
+```
+
+Open `https://<JETSON_IP>:8998` in your browser. Expected frame time: **~78ms**.
+
+---
+
+### libopus from source
+
+If you don't have sudo (e.g. shared DGX):
+
+```bash
+git clone https://github.com/xiph/opus.git && cd opus
+./autogen.sh && ./configure --prefix=$HOME/.local && make -j$(nproc) && make install
+export PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=$HOME/.local/lib:$LD_LIBRARY_PATH
+```
+
+---
 
 ## Usage
 
@@ -54,6 +144,11 @@ export HF_TOKEN=<YOUR_HUGGINGFACE_TOKEN>
 Launch server for live interaction (temporary SSL certs for https):
 ```bash
 SSL_DIR=$(mktemp -d); python -m moshi.server --ssl "$SSL_DIR"
+```
+
+**FP8 (Blackwell GPUs):** Add `--fp8` for ~1.4x faster inference:
+```bash
+SSL_DIR=$(mktemp -d); python -m moshi.server --fp8 --ssl "$SSL_DIR"
 ```
 
 **CPU Offload:** If your GPU has insufficient memory, use the `--cpu-offload` flag to offload model layers to CPU. This requires the `accelerate` package (`pip install accelerate`):
@@ -168,12 +263,12 @@ The present code is provided under the MIT license. The weights for the models a
 If you use PersonaPlex in your research, please cite our paper:
 ```bibtex
 @misc{roy2026personaplexvoicerolecontrol,
-      title={PersonaPlex: Voice and Role Control for Full Duplex Conversational Speech Models}, 
+      title={PersonaPlex: Voice and Role Control for Full Duplex Conversational Speech Models},
       author={Rajarshi Roy and Jonathan Raiman and Sang-gil Lee and Teodor-Dumitru Ene and Robert Kirby and Sungwon Kim and Jaehyeon Kim and Bryan Catanzaro},
       year={2026},
       eprint={2602.06053},
       archivePrefix={arXiv},
       primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2602.06053}, 
+      url={https://arxiv.org/abs/2602.06053},
 }
 ```

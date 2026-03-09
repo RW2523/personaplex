@@ -1,18 +1,19 @@
 import { FC, MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSocket } from "./hooks/useSocket";
 import { SocketContext } from "./SocketContext";
+import { useServerText } from "./hooks/useServerText";
 import { ServerAudio } from "./components/ServerAudio/ServerAudio";
 import { UserAudio } from "./components/UserAudio/UserAudio";
-import { Button } from "../../components/Button/Button";
-import { ServerAudioStats } from "./components/ServerAudio/ServerAudioStats";
 import { AudioStats } from "./hooks/useServerAudio";
-import { TextDisplay } from "./components/TextDisplay/TextDisplay";
 import { MediaContext } from "./MediaContext";
 import { ServerInfo } from "./components/ServerInfo/ServerInfo";
 import { ModelParamsValues, useModelParams } from "./hooks/useModelParams";
 import fixWebmDuration from "webm-duration-fix";
 import { getMimeType, getExtension } from "./getMimeType";
 import { type ThemeType } from "./hooks/useSystemTheme";
+import Sidebar from "../../ui/components/Sidebar";
+import { ConversationStage } from "../../ui/components/Conversation/ConversationStage";
+import { AppView } from "../../ui/types";
 
 type ConversationProps = {
   workerAddr: string;
@@ -28,6 +29,45 @@ type ConversationProps = {
   startConnection: () => Promise<void>;
 } & Partial<ModelParamsValues>;
 
+
+type ConversationState = {
+  userOrb: "idle" | "disconnected";
+  assistantOrb: "idle" | "disconnected";
+  isConnected: boolean;
+  interruptedAt: number;
+  listenOnly: boolean;
+};
+
+const ConversationWithText: FC<{
+  conversationState: ConversationState;
+  userAnalyser: AnalyserNode | null;
+  assistantAnalyser: AnalyserNode | null;
+  onPressConnect: () => void;
+  socketStatus: string;
+  micMuted?: boolean;
+  onMicMuteToggle?: () => void;
+}> = ({ conversationState, userAnalyser, assistantAnalyser, onPressConnect, socketStatus, micMuted, onMicMuteToggle }) => {
+  const { text } = useServerText();
+  const voiceMessages = useMemo(() => {
+    const full = text.join("");
+    if (!full.trim()) return [];
+    return [{ role: "assistant" as const, text: full }];
+  }, [text]);
+  return (
+    <ConversationStage
+      state={conversationState}
+      userAnalyser={userAnalyser}
+      assistantAnalyser={assistantAnalyser}
+      voiceMessages={voiceMessages}
+      pendingAssistantText=""
+      onConnect={onPressConnect}
+      onDisconnect={onPressConnect}
+      connecting={socketStatus === "connecting"}
+      micMuted={micMuted}
+      onMicMuteToggle={onMicMuteToggle}
+    />
+  );
+};
 
 const buildURL = ({
   workerAddr,
@@ -106,10 +146,18 @@ export const Conversation:FC<ConversationProps> = ({
   const audioRecorder = useRef<MediaRecorder>(new MediaRecorder(audioStreamDestination.current.stream, { mimeType: getMimeType("audio"), audioBitsPerSecond: 128000  }));
   const [audioURL, setAudioURL] = useState<string>("");
   const [isOver, setIsOver] = useState(false);
+  const [assistantAnalyser, setAssistantAnalyser] = useState<AnalyserNode | null>(null);
+  const [userAnalyser, setUserAnalyser] = useState<AnalyserNode | null>(null);
+  const [activeView, setActiveView] = useState<AppView>(AppView.VOICE_CONVERSATION);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [hasCriticalDelay, setHasCriticalDelay] = useState(false);
+  const dismissCriticalDelayRef = useRef<() => void>(() => {});
   const modelParams = useModelParams(params);
   const micDuration = useRef<number>(0);
   const actualAudioPlayed = useRef<number>(0);
-  const textContainerRef = useRef<HTMLDivElement>(null);
+  const [micMuted, setMicMuted] = useState(false);
+  const micMutedRef = useRef(false);
+  useEffect(() => { micMutedRef.current = micMuted; }, [micMuted]);
   const textSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
   const audioSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
 
@@ -126,7 +174,8 @@ export const Conversation:FC<ConversationProps> = ({
     setIsOver(true);
     console.log("on disconnect!");
     stopRecording();
-  }, [setIsOver]);
+    onConversationEnd?.();
+  }, [onConversationEnd]);
 
   const { socketStatus, sendMessage, socket, start, stop } = useSocket({
     // onMessage,
@@ -211,80 +260,95 @@ export const Conversation:FC<ConversationProps> = ({
       }
     }, [socketStatus, isOver, start, stop]);
 
-  const socketColor = useMemo(() => {
-    if (socketStatus === "connected") {
-      return 'bg-[#76b900]';
-    } else if (socketStatus === "connecting") {
-      return 'bg-orange-300';
-    } else {
-      return 'bg-red-400';
-    }
-  }, [socketStatus]);
+  const conversationState = useMemo(() => ({
+    userOrb: socketStatus === "connected" ? "idle" as const : "disconnected" as const,
+    assistantOrb: socketStatus === "connected" ? "idle" as const : "disconnected" as const,
+    isConnected: socketStatus === "connected",
+    interruptedAt: 0,
+    listenOnly: false,
+  }), [socketStatus]);
 
-  const socketButtonMsg = useMemo(() => {
-    if (isOver) {
-      return 'New Conversation';
-    }
-    if (socketStatus === "connected") {
-      return 'Disconnect';
-    } else {
-      return 'Connecting...';
-    }
-  }, [isOver, socketStatus]);
+  const onAssistantAnalyserReady = useCallback((a: AnalyserNode) => setAssistantAnalyser(a), []);
+  const onUserAnalyserReady = useCallback((a: AnalyserNode | null) => setUserAnalyser(a), []);
 
   return (
-    <SocketContext.Provider
-      value={{
-        socketStatus,
-        sendMessage,
-        socket,
-      }}
-    >
-    <div>
-    <div className="main-grid h-screen max-h-screen w-screen p-4 max-w-96 md:max-w-screen-lg m-auto">
-      <div className="controls text-center flex justify-center items-center gap-2">
-         <Button
-            onClick={onPressConnect}
-            disabled={socketStatus !== "connected" && !isOver}
-          >
-            {socketButtonMsg}
-          </Button>
-          <div className={`h-4 w-4 rounded-full ${socketColor}`} />
-        </div>
-        {audioContext.current && worklet.current && <MediaContext.Provider value={
+    <SocketContext.Provider value={{ socketStatus, sendMessage, socket }}>
+      <div
+        className="flex h-screen w-screen bg-[#0a0f1a] text-white overflow-hidden relative"
+        style={
           {
-            startRecording,
-            stopRecording,
-            audioContext: audioContext as MutableRefObject<AudioContext>,
-            worklet: worklet as MutableRefObject<AudioWorkletNode>,
-            audioStreamDestination,
-            stereoMerger,
-            micDuration,
-            actualAudioPlayed,
-          }
-        }>
-          <div className="relative player h-full max-h-full w-full justify-between gap-3 md:p-12">
+            "--user-color": "#94a3b8",
+            "--assistant-color": "#14b8a6",
+            "--voice-bg": "#0f172a",
+            "--voice-text": "#f1f5f9",
+          } as React.CSSProperties
+        }
+      >
+        {hasCriticalDelay && (
+          <div className="fixed left-0 top-0 z-50 flex w-screen justify-between items-center bg-red-500 p-2 text-center text-white text-sm">
+            <p>A connection issue has been detected, you&apos;ve been reconnected</p>
+            <button onClick={() => { dismissCriticalDelayRef.current(); setHasCriticalDelay(false); }} className="bg-white text-black px-2 py-1 rounded">
+              Dismiss
+            </button>
+          </div>
+        )}
+        <Sidebar
+          activeView={activeView}
+          setActiveView={setActiveView}
+          sidebarOpen={sidebarOpen}
+          onCloseSidebar={() => setSidebarOpen(false)}
+        />
+        {audioContext.current && worklet.current && (
+          <MediaContext.Provider
+            value={{
+              startRecording,
+              stopRecording,
+              audioContext: audioContext as MutableRefObject<AudioContext>,
+              worklet: worklet as MutableRefObject<AudioWorkletNode>,
+              audioStreamDestination,
+              stereoMerger,
+              micDuration,
+              actualAudioPlayed,
+              micMutedRef,
+            }}
+          >
+            <div className="sr-only" aria-hidden>
               <ServerAudio
-                setGetAudioStats={(callback: () => AudioStats) =>
-                  (getAudioStats.current = callback)
-                }
+                setGetAudioStats={(cb: () => AudioStats) => (getAudioStats.current = cb)}
                 theme={theme}
+                onAssistantAnalyserReady={onAssistantAnalyserReady}
+                onCriticalDelayChange={(has, dismiss) => {
+                  setHasCriticalDelay(has);
+                  dismissCriticalDelayRef.current = dismiss;
+                }}
               />
-              <UserAudio theme={theme}/>
-              <div className="pt-8 text-sm flex justify-center items-center flex-col download-links">
-                {audioURL && <div><a href={audioURL} download={`personaplex_audio.${getExtension("audio")}`} className="pt-2 text-center block">Download audio</a></div>}
+              <UserAudio theme={theme} onUserAnalyserReady={onUserAnalyserReady} />
+            </div>
+            <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+              <ConversationWithText
+                conversationState={conversationState}
+                userAnalyser={userAnalyser}
+                assistantAnalyser={assistantAnalyser}
+                onPressConnect={onPressConnect}
+                socketStatus={socketStatus}
+                micMuted={micMuted}
+                onMicMuteToggle={() => setMicMuted((m) => !m)}
+              />
+              <div className="shrink-0 px-4 py-2 flex flex-wrap items-center justify-center gap-4 border-t border-white/5 text-slate-400 text-xs">
+                {audioURL && (
+                  <a
+                    href={audioURL}
+                    download={`echomind_audio.${getExtension("audio")}`}
+                    className="text-cyan-400 hover:text-cyan-300"
+                  >
+                    Download audio
+                  </a>
+                )}
+                <ServerInfo />
               </div>
-          </div>
-          <div className="scrollbar player-text" ref={textContainerRef}>
-            <TextDisplay containerRef={textContainerRef}/>
-          </div>
-          <div className="player-stats hidden md:block">
-            <ServerAudioStats getAudioStats={getAudioStats} />
-          </div></MediaContext.Provider>}
-        </div>
-        <div className="max-w-96 md:max-w-screen-lg p-4 m-auto text-center">
-          <ServerInfo/>
-        </div>
+            </main>
+          </MediaContext.Provider>
+        )}
       </div>
     </SocketContext.Provider>
   );

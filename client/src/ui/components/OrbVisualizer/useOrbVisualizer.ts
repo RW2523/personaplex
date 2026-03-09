@@ -1,0 +1,165 @@
+import { useRef, useEffect, useCallback } from "react";
+import type { OrbState } from "../Conversation/ChatState";
+import { getOrbStateParams } from "../Conversation/ChatState";
+import {
+  drawCenterAvatar,
+  drawGlowRing,
+  drawWaveRing,
+  drawOrbitingParticles,
+  drawInterruptionRipple,
+} from "./orbEffects";
+
+export interface OrbVisualizerParams {
+  role: "user" | "assistant";
+  analyserNode: AnalyserNode | null;
+  isActive: boolean;
+  isConnected: boolean;
+  orbState: OrbState;
+  avatarImage: HTMLImageElement | null;
+  interruptedAt: number;
+  /** CSS variable for color, e.g. #ffffff or #00ff9c */
+  color: string;
+  /** Canvas size (width/height). */
+  size: number;
+}
+
+const SMOOTHING = 0.25;
+const INTERRUPTION_RIPPLE_MS = 400;
+/** Fixed orb scale in all states so layout never shifts */
+const ORB_SCALE = 0.92;
+
+export function useOrbVisualizer(
+  canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  params: OrbVisualizerParams
+) {
+  const {
+    role,
+    analyserNode,
+    isActive,
+    isConnected,
+    orbState,
+    avatarImage,
+    interruptedAt,
+    color,
+    size,
+  } = params;
+
+  const timeDomainRef = useRef(new Float32Array(2048));
+  const animRef = useRef<number>(0);
+  const interruptStartRef = useRef<number>(0);
+
+  const draw = useCallback(
+    (time: number) => {
+      try {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const rawSize = Number(size);
+        if (typeof rawSize !== "number" || !Number.isFinite(rawSize) || rawSize <= 0) return;
+        const safeSize = Math.max(1, Math.min(rawSize, 10000));
+
+        const centerX = safeSize / 2;
+        const centerY = safeSize / 2;
+        const baseRadius = (safeSize / 2) * 0.9;
+
+        if (analyserNode) {
+          analyserNode.smoothingTimeConstant = SMOOTHING;
+          analyserNode.getFloatTimeDomainData(timeDomainRef.current);
+        }
+
+        const stateParams = getOrbStateParams(orbState);
+        const radius = baseRadius * ORB_SCALE;
+
+        let rippleProgress = 1;
+        if (interruptedAt > 0) {
+          if (interruptStartRef.current === 0) interruptStartRef.current = interruptedAt;
+          rippleProgress = (time - interruptStartRef.current) / INTERRUPTION_RIPPLE_MS;
+          if (rippleProgress >= 1) interruptStartRef.current = 0;
+        }
+
+        ctx.save();
+        ctx.clearRect(0, 0, safeSize, safeSize);
+
+        if (isConnected && stateParams.rotationSpeed > 0) {
+          ctx.translate(centerX, centerY);
+          ctx.rotate((time * 0.001) * stateParams.rotationSpeed);
+          ctx.translate(-centerX, -centerY);
+        }
+
+        // Use state params for glow; slight boost when active, never dim the inactive orb (keep vivid)
+        const glowIntensity = stateParams.glowIntensity * (isActive ? 1.1 : 1);
+        const hasPulse = stateParams.pulseSpeed > 0 && (orbState === "listening" || orbState === "speaking" || orbState === "thinking");
+        const pulse = hasPulse ? 1 + 0.02 * Math.sin(time * 0.002 * stateParams.pulseSpeed * 60) : 1;
+        const rawR = radius * pulse;
+        // Clamp to valid range so canvas arc never receives negative or non-finite radius
+        const r =
+          typeof rawR === "number" && Number.isFinite(rawR) && rawR >= 0 && rawR <= 1e5
+            ? rawR
+            : baseRadius;
+
+        drawGlowRing(ctx, centerX, centerY, r, glowIntensity, color, stateParams.ringThickness);
+
+        if (rippleProgress < 1) {
+          drawInterruptionRipple(ctx, centerX, centerY, r, rippleProgress, color);
+        }
+
+        drawWaveRing(
+          ctx,
+          centerX,
+          centerY,
+          r,
+          timeDomainRef.current,
+          stateParams.waveAmplitude,
+          color,
+          SMOOTHING
+        );
+
+        drawOrbitingParticles(
+          ctx,
+          centerX,
+          centerY,
+          r,
+          stateParams.particleCount,
+          time / 1000,
+          color,
+          orbState
+        );
+
+        drawCenterAvatar(ctx, centerX, centerY, r, avatarImage, role, color + "40", time);
+
+        ctx.restore();
+      } catch {
+        // Swallow canvas errors (e.g. invalid radius) so one bad frame does not break the loop
+      }
+    },
+    [
+      canvasRef,
+      size,
+      role,
+      analyserNode,
+      isActive,
+      isConnected,
+      orbState,
+      avatarImage,
+      interruptedAt,
+      color,
+    ]
+  );
+
+  useEffect(() => {
+    let running = true;
+    const loop = (time: number) => {
+      if (!running) return;
+      draw(time);
+      animRef.current = requestAnimationFrame(loop);
+    };
+    animRef.current = requestAnimationFrame(loop);
+    return () => {
+      running = false;
+      cancelAnimationFrame(animRef.current);
+    };
+  }, [draw]);
+}

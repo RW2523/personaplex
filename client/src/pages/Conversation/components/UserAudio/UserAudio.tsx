@@ -1,13 +1,15 @@
 import { FC, useCallback, useEffect, useRef, useState } from "react";
 import { useSocketContext } from "../../SocketContext";
+import { useMediaContext } from "../../MediaContext";
 import { useUserAudio } from "../../hooks/useUserAudio";
 import { ClientVisualizer } from "../AudioVisualizer/ClientVisualizer";
 import { type ThemeType } from "../../hooks/useSystemTheme";
 
 type UserAudioProps = {
   theme: ThemeType;
+  onUserAnalyserReady?: (analyser: AnalyserNode | null) => void;
 };
-export const UserAudio: FC<UserAudioProps> = ({theme}) => {
+export const UserAudio: FC<UserAudioProps> = ({ theme, onUserAnalyserReady }) => {
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const { sendMessage, socketStatus } = useSocketContext();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -19,17 +21,17 @@ export const UserAudio: FC<UserAudioProps> = ({theme}) => {
     console.log("Recording stopped");
   }, []);
 
+  const { micMutedRef } = useMediaContext();
   const onRecordingChunk = useCallback(
     (chunk: Uint8Array) => {
-      if (socketStatus !== "connected") {
-        return;
-      }
+      if (socketStatus !== "connected") return;
+      if (micMutedRef?.current) return;
       sendMessage({
         type: "audio",
         data: chunk,
       });
     },
-    [sendMessage, socketStatus],
+    [sendMessage, socketStatus, micMutedRef],
   );
 
   const { startRecordingUser, stopRecording } = useUserAudio({
@@ -48,12 +50,14 @@ export const UserAudio: FC<UserAudioProps> = ({theme}) => {
   });
 
   useEffect(() => {
+    onUserAnalyserReady?.(null);
     let res: Awaited<ReturnType<typeof startRecordingUser>>;
     if (socketStatus === "connected") {
       startRecordingUser().then(result => {
         if (result) {
           res = result;
           setAnalyser(result.analyser);
+          onUserAnalyserReady?.(result.analyser);
         }
       });
     }
@@ -62,7 +66,7 @@ export const UserAudio: FC<UserAudioProps> = ({theme}) => {
       stopRecording();
       res?.source?.disconnect();
     };
-  }, [startRecordingUser, stopRecording, socketStatus]);
+  }, [startRecordingUser, stopRecording, socketStatus, onUserAnalyserReady]);
 
   return (
     <div className="user-audio h-5/6 aspect-square" ref={containerRef}>

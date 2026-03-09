@@ -292,3 +292,15 @@ If you use PersonaPlex in your research, please cite our paper:
       url={https://arxiv.org/abs/2602.06053},
 }
 ```
+cd /home/echomind/Documents/plex/personaplex/client && npm run build 2>&1 | tail -20
+
+pkill -f "moshi.server"
+
+pkill -f "vite"
+
+lsof -ti:8998 | xargs kill -9
+
+cd /home/echomind/Documents/plex/personaplex
+source ~/personaplex-venv/bin/activate  # if using venv
+SSL_DIR=$(mktemp -d)
+python -m moshi.server --fp8 --ssl "$SSL_DIR" --static client/dist

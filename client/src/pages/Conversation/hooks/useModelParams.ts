@@ -36,8 +36,8 @@ export const useModelParams = (params?:useModelParamsArgs) => {
   const [padMult, setPadMultBase] = useState(params?.padMult || DEFAULT_PAD_MULT);
   const [repetitionPenalty, setRepetitionPenaltyBase] = useState(params?.repetitionPenalty || DEFAULT_REPETITION_PENALTY);
   const [repetitionPenaltyContext, setRepetitionPenaltyContextBase] = useState(params?.repetitionPenaltyContext || DEFAULT_REPETITION_PENALTY_CONTEXT);
-  const [textPrompt, setTextPromptBase] = useState(params?.textPrompt || DEFAULT_TEXT_PROMPT);
-  const [voicePrompt, setVoicePromptBase] = useState(params?.voicePrompt || DEFAULT_VOICE_PROMPT);
+  const [textPrompt, setTextPromptBase] = useLocalStorage("echomind_persona", params?.textPrompt || DEFAULT_TEXT_PROMPT);
+  const [voicePrompt, setVoicePromptBase] = useLocalStorage("echomind_voice", params?.voicePrompt || DEFAULT_VOICE_PROMPT);
   const [randomSeed, setRandomSeedBase] = useLocalStorage('randomSeed', params?.randomSeed || DEFAULT_RANDOM_SEED);
 
   const resetParams = useCallback(() => {

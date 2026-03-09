@@ -1,4 +1,4 @@
-import { FC, useRef } from "react";
+import { FC, useEffect, useRef } from "react";
 import { AudioStats, useServerAudio } from "../../hooks/useServerAudio";
 import { ServerVisualizer } from "../AudioVisualizer/ServerVisualizer";
 import { type ThemeType } from "../../hooks/useSystemTheme";
@@ -6,12 +6,22 @@ import { type ThemeType } from "../../hooks/useSystemTheme";
 type ServerAudioProps = {
   setGetAudioStats: (getAudioStats: () => AudioStats) => void;
   theme: ThemeType;
+  onAssistantAnalyserReady?: (analyser: AnalyserNode) => void;
+  onCriticalDelayChange?: (has: boolean, dismiss: () => void) => void;
 };
-export const ServerAudio: FC<ServerAudioProps> = ({ setGetAudioStats, theme }) => {
+export const ServerAudio: FC<ServerAudioProps> = ({ setGetAudioStats, theme, onAssistantAnalyserReady, onCriticalDelayChange }) => {
   const { analyser, hasCriticalDelay, setHasCriticalDelay } = useServerAudio({
     setGetAudioStats,
   });
   const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (analyser?.current && onAssistantAnalyserReady) {
+      onAssistantAnalyserReady(analyser.current);
+    }
+  }, [analyser, onAssistantAnalyserReady]);
+  useEffect(() => {
+    onCriticalDelayChange?.(hasCriticalDelay, () => setHasCriticalDelay(false));
+  }, [hasCriticalDelay, onCriticalDelayChange]);
   return (
     <>
       {hasCriticalDelay && (

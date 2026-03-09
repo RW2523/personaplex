@@ -8,6 +8,8 @@ type MediaContextType = {
   micDuration: MutableRefObject<number>;
   actualAudioPlayed: MutableRefObject<number>;
   stereoMerger: MutableRefObject<ChannelMergerNode>;
+  /** Ref to check if mic is muted (stops sending audio when true) */
+  micMutedRef?: MutableRefObject<boolean>;
 };
 
 export const MediaContext = createContext<MediaContextType | null>(null);

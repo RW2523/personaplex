@@ -6,7 +6,7 @@ export const ServerInfo = () => {
     return null;
   }
   return (
-    <div className="p-2 pt-4 self-center flex flex-col break-words">
+    <div className="p-2 pt-4 self-center flex flex-col break-words text-slate-400 text-xs max-w-md">
       Our server is running on the following configuration:
         <div>Text temperature: {serverInfo.text_temperature}</div>
         <div>Text topk: {serverInfo.text_topk}</div>
